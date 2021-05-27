@@ -2,7 +2,9 @@ package stagedsync
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
+	"math"
 	"runtime"
 	"time"
 
@@ -19,11 +21,12 @@ import (
 var stageTranspileGauge = metrics.NewRegisteredGauge("stage/tevm", nil)
 
 type TranspileCfg struct {
-	db            ethdb.RwKV
-	batchSize     datasize.ByteSize
-	readerBuilder StateReaderBuilder
-	writerBuilder StateWriterBuilder
-	chainConfig   *params.ChainConfig
+	db              ethdb.RwKV
+	batchSize       datasize.ByteSize
+	readerBuilder   StateReaderBuilder
+	writerBuilder   StateWriterBuilder
+	chainConfig     *params.ChainConfig
+	pruningDistance uint64
 }
 
 func StageTranspileCfg(
@@ -32,13 +35,15 @@ func StageTranspileCfg(
 	readerBuilder StateReaderBuilder,
 	writerBuilder StateWriterBuilder,
 	chainConfig *params.ChainConfig,
+	pruningDistance uint64,
 ) TranspileCfg {
 	return TranspileCfg{
-		db:            kv,
-		batchSize:     batchSize,
-		readerBuilder: readerBuilder,
-		writerBuilder: writerBuilder,
-		chainConfig:   chainConfig,
+		db:              kv,
+		batchSize:       batchSize,
+		readerBuilder:   readerBuilder,
+		writerBuilder:   writerBuilder,
+		chainConfig:     chainConfig,
+		pruningDistance: pruningDistance,
 	}
 }
 
@@ -142,6 +147,13 @@ func transpileBatch(logPrefix string, s *StageState, fromBlock uint64, toBlock u
 		}
 	}
 
+	// Prune TEVM statuses if needed
+	if cfg.pruningDistance > 0 {
+		if err := pruneTEVMStatuses(tx, logPrefix, toBlock, cfg.pruningDistance, logEvery.C); err != nil {
+			return err
+		}
+	}
+
 	log.Info(fmt.Sprintf("[%s] Completed on", logPrefix), "contracts", stageProgress)
 
 	return nil
@@ -220,6 +232,58 @@ func SpawnTranspileStage(s *StageState, tx ethdb.RwTx, toBlock uint64, quit <-ch
 
 	log.Info(fmt.Sprintf("[%s] Completed on", logPrefix), "block", prevStageProgress)
 	s.Done()
+	return nil
+}
+
+func pruneTEVMStatuses(tx ethdb.RwTx, logPrefix string, toBlock uint64, pruningDistance uint64, logChannel <-chan time.Time) error {
+	bucketName := "TEVM statuses"
+
+	tevmStatusCursor, err := tx.RwCursorDupSort(dbutils.ContractTEVMCodeBucket)
+	if err != nil {
+		return fmt.Errorf("%s: failed to create cursor for pruning %s: %v", logPrefix, bucketName, err)
+	}
+
+	var prunedMin uint64 = math.MaxUint64
+	var prunedMax uint64 = 0
+	var k []byte
+
+	for k, _, err = tevmStatusCursor.First(); k != nil && err == nil; k, _, err = tevmStatusCursor.NextNoDup() {
+		blockNum := binary.BigEndian.Uint64(k)
+
+		if toBlock-blockNum <= pruningDistance {
+			break
+		}
+
+		select {
+		default:
+		case <-logChannel:
+			var m runtime.MemStats
+			runtime.ReadMemStats(&m)
+			log.Info(fmt.Sprintf("[%s] Pruning", logPrefix), "table", bucketName, "number", blockNum,
+				"alloc", common.StorageSize(m.Alloc),
+				"sys", common.StorageSize(m.Sys),
+				"numGC", int(m.NumGC))
+		}
+
+		if err = tevmStatusCursor.DeleteCurrent(); err != nil {
+			return fmt.Errorf("%s: failed to remove %s for block %d: %w", logPrefix, bucketName, blockNum, err)
+		}
+
+		if blockNum < prunedMin {
+			prunedMin = blockNum
+		}
+		if blockNum > prunedMax {
+			prunedMax = blockNum
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("%s: failed to move %s cleanup cursor: %w", logPrefix, bucketName, err)
+	}
+
+	if prunedMax != 0 && prunedMax > prunedMin+16 {
+		log.Info(fmt.Sprintf("[%s] Pruned", logPrefix), "table", bucketName, "from", prunedMin, "to", prunedMax)
+	}
+
 	return nil
 }
 
