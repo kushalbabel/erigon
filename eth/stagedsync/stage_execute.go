@@ -477,7 +477,7 @@ func pruneDupSortedBucket(tx ethdb.RwTx, logPrefix string, name string, tableNam
 	var prunedMax uint64 = 0
 	var k []byte
 
-	for k, _, err = cursor.First(); k != nil && err == nil; k, _, err = cursor.NextNoDup() {
+	for k, _, err = cursor.First(); k != nil && err == nil; k, _, err = cursor.Next() {
 		blockNum := binary.BigEndian.Uint64(k)
 		if endBlock-blockNum <= pruningDistance {
 			break
