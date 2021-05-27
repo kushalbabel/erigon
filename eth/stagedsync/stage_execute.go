@@ -444,10 +444,10 @@ func SpawnExecuteBlocksStage(s *StageState, tx ethdb.RwTx, toBlock uint64, quit 
 	}
 	// Prune changesets if needed
 	if cfg.pruningDistance > 0 {
-		if err := pruneChangeSets(tx, logPrefix, "account changesets", dbutils.AccountChangeSetBucket, to, cfg.pruningDistance, logEvery.C); err != nil {
+		if err := pruneDupSortedBucket(tx, logPrefix, "account changesets", dbutils.AccountChangeSetBucket, to, cfg.pruningDistance, logEvery.C); err != nil {
 			return err
 		}
-		if err := pruneChangeSets(tx, logPrefix, "storage changesets", dbutils.StorageChangeSetBucket, to, cfg.pruningDistance, logEvery.C); err != nil {
+		if err := pruneDupSortedBucket(tx, logPrefix, "storage changesets", dbutils.StorageChangeSetBucket, to, cfg.pruningDistance, logEvery.C); err != nil {
 			return err
 		}
 	}
@@ -466,18 +466,18 @@ func SpawnExecuteBlocksStage(s *StageState, tx ethdb.RwTx, toBlock uint64, quit 
 	return stoppedErr
 }
 
-func pruneChangeSets(tx ethdb.RwTx, logPrefix string, name string, tableName string, endBlock uint64, pruningDistance uint64, logChannel <-chan time.Time) error {
-	changeSetCursor, err := tx.RwCursorDupSort(tableName)
+func pruneDupSortedBucket(tx ethdb.RwTx, logPrefix string, name string, tableName string, endBlock uint64, pruningDistance uint64, logChannel <-chan time.Time) error {
+	cursor, err := tx.RwCursorDupSort(tableName)
 	if err != nil {
 		return fmt.Errorf("%s: failed to create cursor for pruning %s: %v", logPrefix, name, err)
 	}
-	defer changeSetCursor.Close()
+	defer cursor.Close()
 
 	var prunedMin uint64 = math.MaxUint64
 	var prunedMax uint64 = 0
 	var k []byte
 
-	for k, _, err = changeSetCursor.First(); k != nil && err == nil; k, _, err = changeSetCursor.Next() {
+	for k, _, err = cursor.First(); k != nil && err == nil; k, _, err = cursor.NextNoDup() {
 		blockNum := binary.BigEndian.Uint64(k)
 		if endBlock-blockNum <= pruningDistance {
 			break
@@ -492,8 +492,9 @@ func pruneChangeSets(tx ethdb.RwTx, logPrefix string, name string, tableName str
 				"sys", common.StorageSize(m.Sys),
 				"numGC", int(m.NumGC))
 		}
-		if err = changeSetCursor.DeleteCurrent(); err != nil {
-			return fmt.Errorf("%s: failed to remove %s for block %d: %v", logPrefix, name, blockNum, err)
+
+		if err = cursor.DeleteCurrent(); err != nil {
+			return fmt.Errorf("%s: failed to remove %s for block %d: %w", logPrefix, name, blockNum, err)
 		}
 		if blockNum < prunedMin {
 			prunedMin = blockNum
