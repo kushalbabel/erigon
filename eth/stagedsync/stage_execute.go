@@ -471,6 +471,8 @@ func pruneChangeSets(tx ethdb.RwTx, logPrefix string, name string, tableName str
 	if err != nil {
 		return fmt.Errorf("%s: failed to create cursor for pruning %s: %v", logPrefix, name, err)
 	}
+	defer changeSetCursor.Close()
+
 	var prunedMin uint64 = math.MaxUint64
 	var prunedMax uint64 = 0
 	var k []byte

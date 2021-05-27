@@ -242,6 +242,7 @@ func pruneTEVMStatuses(tx ethdb.RwTx, logPrefix string, toBlock uint64, pruningD
 	if err != nil {
 		return fmt.Errorf("%s: failed to create cursor for pruning %s: %v", logPrefix, bucketName, err)
 	}
+	defer tevmStatusCursor.Close()
 
 	var prunedMin uint64 = math.MaxUint64
 	var prunedMax uint64 = 0
