@@ -140,21 +140,21 @@ func testKVPath() string {
 }
 
 // todo: return TEVM code and use it
-func GetCheckTEVM(db KVGetter) func(codeHash common.Hash) (bool, error) {
+func GetCheckTEVM(db KVGetter) func(addr common.Address, codeHash common.Hash) (bool, error) {
 	checked := map[common.Hash]struct{}{}
 	var ok bool
 
-	return func(codeHash common.Hash) (bool, error) {
+	return func(addr common.Address, codeHash common.Hash) (bool, error) {
 		if _, ok = checked[codeHash]; ok {
 			return true, nil
 		}
 
-		ok, err := db.Has(dbutils.ContractTEVMCodeStatusBucket, codeHash.Bytes())
+		v, err := db.GetOne(dbutils.CallTraceSet, addr.Bytes())
 		if !errors.Is(err, ErrKeyNotFound) {
 			return false, err
 		}
 
-		if ok {
+		if v[common.AddressLength]&4 == 1 {
 			return false, ErrKeyNotFound
 		}
 

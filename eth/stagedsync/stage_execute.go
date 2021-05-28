@@ -86,7 +86,7 @@ func StageExecuteBlocksCfg(
 	return ExecuteBlockCfg{
 		db:                    kv,
 		writeReceipts:         WriteReceipts,
-		writeCallTraces:       WriteCallTraces,
+		writeCallTraces:       WriteCallTraces || writeTEVM, // TEVM stage depends on CallTraceSet
 		writeTEVM:             writeTEVM,
 		pruningDistance:       pruningDistance,
 		batchSize:             BatchSize,
@@ -119,10 +119,10 @@ func executeBlockWithGo(
 	traceCursor ethdb.RwCursorDupSort,
 	accumulator *shards.Accumulator,
 	readerWriterWrapper func(r state.StateReader, w state.WriterWithChangeSets) *TouchReaderWriter,
-	checkTEVM func(hash common.Hash) (bool, error),
+	checkTEVM func(addr common.Address, hash common.Hash) (bool, error),
 ) error {
 	blockNum := block.NumberU64()
-	stateReader, stateWriter := newStateReaderWriter(params, batch, tx, blockNum, block.Hash(), writeChangesets, accumulator, readerWriterWrapper)
+	stateReader, stateWriter, stateReaderWriter := newStateReaderWriter(params, batch, tx, blockNum, block.Hash(), writeChangesets, accumulator, readerWriterWrapper)
 
 	// where the magic happens
 	getHeader := func(hash common.Hash, number uint64) *types.Header { return rawdb.ReadHeader(tx, hash, number) }
@@ -150,6 +150,11 @@ func executeBlockWithGo(
 	}
 
 	if params.writeCallTraces {
+		var touchedCodeAddresses map[common.Address]struct{}
+		if params.writeTEVM {
+			touchedCodeAddresses = stateReaderWriter.AllTouches()
+		}
+
 		callTracer.tos[block.Coinbase()] = struct{}{}
 		for _, uncle := range block.Uncles() {
 			callTracer.tos[uncle.Coinbase] = struct{}{}
@@ -181,6 +186,12 @@ func executeBlockWithGo(
 			if _, ok := callTracer.tos[addr]; ok {
 				v[common.AddressLength] |= 2
 			}
+			// TEVM marking still untranslated contracts
+			if params.writeTEVM {
+				if _, ok := touchedCodeAddresses[addr]; ok {
+					v[common.AddressLength] |= 4
+				}
+			}
 			if j == 0 {
 				if err = traceCursor.Append(blockNumEnc[:], v[:]); err != nil {
 					return err
@@ -206,7 +217,7 @@ func newStateReaderWriter(
 	writeChangesets bool,
 	accumulator *shards.Accumulator,
 	readerWriterWrapper func(r state.StateReader, w state.WriterWithChangeSets) *TouchReaderWriter,
-) (state.StateReader, state.WriterWithChangeSets) {
+) (state.StateReader, state.WriterWithChangeSets, *TouchReaderWriter) {
 
 	var stateReader state.StateReader
 	var stateWriter state.WriterWithChangeSets
@@ -230,13 +241,14 @@ func newStateReaderWriter(
 		}
 	}
 
+	var wrapper *TouchReaderWriter
 	if readerWriterWrapper != nil {
-		wrapper := readerWriterWrapper(stateReader, stateWriter)
+		wrapper = readerWriterWrapper(stateReader, stateWriter)
 		stateReader = wrapper
 		stateWriter = wrapper
 	}
 
-	return stateReader, stateWriter
+	return stateReader, stateWriter, wrapper
 }
 
 func SpawnExecuteBlocksStage(s *StageState, tx ethdb.RwTx, toBlock uint64, quit <-chan struct{}, cfg ExecuteBlockCfg, accumulator *shards.Accumulator) error {
@@ -274,15 +286,6 @@ func SpawnExecuteBlocksStage(s *StageState, tx ethdb.RwTx, toBlock uint64, quit 
 			return fmt.Errorf("%s: failed to create cursor for call traces: %v", logPrefix, err)
 		}
 		defer traceCursor.Close()
-	}
-
-	var tevmStatusCursor ethdb.RwCursorDupSort
-	if cfg.writeTEVM {
-		var err error
-		if tevmStatusCursor, err = tx.RwCursorDupSort(dbutils.ContractTEVMCodeStatusBucket); err != nil {
-			return fmt.Errorf("%s: failed to create cursor for TEVM status: %v", logPrefix, err)
-		}
-		defer tevmStatusCursor.Close()
 	}
 
 	useSilkworm := cfg.silkwormExecutionFunc != nil
@@ -330,8 +333,7 @@ func SpawnExecuteBlocksStage(s *StageState, tx ethdb.RwTx, toBlock uint64, quit 
 			}
 
 			var (
-				stateReaderWriter *TouchReaderWriter
-				checkTEVMCode     func(codeHash common.Hash) (bool, error)
+				checkTEVMCode func(addr common.Address, codeHash common.Hash) (bool, error)
 			)
 
 			if cfg.writeTEVM {
@@ -340,44 +342,11 @@ func SpawnExecuteBlocksStage(s *StageState, tx ethdb.RwTx, toBlock uint64, quit 
 				checkTEVMCode = nil
 			}
 			readerWriterWrapper := func(r state.StateReader, w state.WriterWithChangeSets) *TouchReaderWriter {
-				stateReaderWriter = NewTouchCreateWatcher(r, w, checkTEVMCode)
-				return stateReaderWriter
+				return NewTouchCreateWatcher(r, w, checkTEVMCode)
 			}
 
 			if err = executeBlockWithGo(block, tx, batch, cfg, writeChangesets, traceCursor, accumulator, readerWriterWrapper, checkTEVMCode); err != nil {
 				return err
-			}
-
-			// TEVM marking new contracts sub-stage
-			if cfg.writeTEVM {
-				codeHashes := stateReaderWriter.AllTouches()
-				touchedСontracts := make(common.Hashes, 0, len(codeHashes))
-
-				for codeHash := range codeHashes {
-					touchedСontracts = append(touchedСontracts, codeHash)
-				}
-				sort.Sort(touchedСontracts)
-
-				var blockNumEnc [8]byte
-				binary.BigEndian.PutUint64(blockNumEnc[:], blockNum)
-
-				var prev common.Hash
-				for i, hash := range touchedСontracts {
-					var h [common.HashLength]byte
-					copy(h[:], hash[:])
-
-					if i == 0 {
-						if err = tevmStatusCursor.Append(blockNumEnc[:], h[:]); err != nil {
-							return err
-						}
-					} else {
-						if err = tevmStatusCursor.AppendDup(blockNumEnc[:], h[:]); err != nil {
-							return err
-						}
-					}
-
-					copy(prev[:], h[:])
-				}
 			}
 		}
 
@@ -410,11 +379,6 @@ func SpawnExecuteBlocksStage(s *StageState, tx ethdb.RwTx, toBlock uint64, quit 
 				if cfg.writeCallTraces {
 					if traceCursor, err = tx.RwCursorDupSort(dbutils.CallTraceSet); err != nil {
 						return fmt.Errorf("%s: failed to create cursor for call traces: %v", logPrefix, err)
-					}
-				}
-				if cfg.writeTEVM {
-					if tevmStatusCursor, err = tx.RwCursorDupSort(dbutils.ContractTEVMCodeStatusBucket); err != nil {
-						return fmt.Errorf("%s: failed to create cursor for tevm statuses: %v", logPrefix, err)
 					}
 				}
 			}
@@ -477,7 +441,7 @@ func pruneDupSortedBucket(tx ethdb.RwTx, logPrefix string, name string, tableNam
 	var prunedMax uint64 = 0
 	var k []byte
 
-	for k, _, err = cursor.First(); k != nil && err == nil; k, _, err = cursor.Next() {
+	for k, _, err = cursor.First(); k != nil && err == nil; k, _, err = cursor.NextNoDup() {
 		blockNum := binary.BigEndian.Uint64(k)
 		if endBlock-blockNum <= pruningDistance {
 			break
@@ -493,7 +457,7 @@ func pruneDupSortedBucket(tx ethdb.RwTx, logPrefix string, name string, tableNam
 				"numGC", int(m.NumGC))
 		}
 
-		if err = cursor.DeleteCurrent(); err != nil {
+		if err = cursor.DeleteCurrentDuplicates(); err != nil {
 			return fmt.Errorf("%s: failed to remove %s for block %d: %w", logPrefix, name, blockNum, err)
 		}
 		if blockNum < prunedMin {
@@ -677,25 +641,6 @@ func unwindExecutionStage(u *UnwindState, s *StageState, tx ethdb.RwTx, quit <-c
 		}
 	}
 
-	if cfg.writeTEVM {
-		keyStart := dbutils.EncodeBlockNumber(u.UnwindPoint + 1)
-		tevmStatusCursor, err := tx.RwCursorDupSort(dbutils.ContractTEVMCodeStatusBucket)
-		if err != nil {
-			return err
-		}
-		defer tevmStatusCursor.Close()
-
-		for k, _, err := tevmStatusCursor.Seek(keyStart); k != nil; k, _, err = tevmStatusCursor.NextNoDup() {
-			if err != nil {
-				return err
-			}
-			err = tevmStatusCursor.DeleteCurrentDuplicates()
-			if err != nil {
-				return err
-			}
-		}
-	}
-
 	return nil
 }
 
@@ -741,12 +686,12 @@ func min(a, b uint64) uint64 {
 	return b
 }
 
-func NewTouchCreateWatcher(r state.StateReader, w state.WriterWithChangeSets, check func(hash common.Hash) (bool, error)) *TouchReaderWriter {
+func NewTouchCreateWatcher(r state.StateReader, w state.WriterWithChangeSets, check func(addr common.Address, hash common.Hash) (bool, error)) *TouchReaderWriter {
 	return &TouchReaderWriter{
 		r:            r,
 		w:            w,
-		readCodes:    make(map[common.Hash]struct{}),
-		updatedCodes: make(map[common.Hash]struct{}),
+		readCodes:    make(map[common.Address]struct{}),
+		updatedCodes: make(map[common.Address]struct{}),
 		check:        check,
 	}
 }
@@ -754,9 +699,9 @@ func NewTouchCreateWatcher(r state.StateReader, w state.WriterWithChangeSets, ch
 type TouchReaderWriter struct {
 	r            state.StateReader
 	w            state.WriterWithChangeSets
-	readCodes    map[common.Hash]struct{}
-	updatedCodes map[common.Hash]struct{}
-	check        func(hash common.Hash) (bool, error)
+	readCodes    map[common.Address]struct{}
+	updatedCodes map[common.Address]struct{}
+	check        func(addr common.Address, hash common.Hash) (bool, error)
 }
 
 func (d *TouchReaderWriter) ReadAccountData(address common.Address) (*accounts.Account, error) {
@@ -769,14 +714,14 @@ func (d *TouchReaderWriter) ReadAccountStorage(address common.Address, incarnati
 
 func (d *TouchReaderWriter) ReadAccountCode(address common.Address, incarnation uint64, codeHash common.Hash) ([]byte, error) {
 	if d.check != nil && codeHash != (common.Hash{}) {
-		_, ok := d.readCodes[codeHash]
+		_, ok := d.readCodes[address]
 		if !ok {
-			ok, err := d.check(codeHash)
+			_, err := d.check(address, codeHash)
 			if err != nil {
 				return nil, err
 			}
 			if !ok {
-				d.readCodes[codeHash] = struct{}{}
+				d.readCodes[address] = struct{}{}
 			}
 		}
 	}
@@ -806,14 +751,14 @@ func (d *TouchReaderWriter) UpdateAccountData(ctx context.Context, address commo
 
 func (d *TouchReaderWriter) UpdateAccountCode(address common.Address, incarnation uint64, codeHash common.Hash, code []byte) error {
 	if d.check != nil && codeHash != (common.Hash{}) {
-		_, ok := d.updatedCodes[codeHash]
+		_, ok := d.updatedCodes[address]
 		if !ok {
-			ok, err := d.check(codeHash)
+			ok, err := d.check(address, codeHash)
 			if err != nil {
 				return err
 			}
 			if !ok {
-				d.updatedCodes[codeHash] = struct{}{}
+				d.updatedCodes[address] = struct{}{}
 			}
 		}
 	}
@@ -832,8 +777,8 @@ func (d *TouchReaderWriter) CreateContract(address common.Address) error {
 	return d.w.CreateContract(address)
 }
 
-func (d *TouchReaderWriter) AllTouches() map[common.Hash]struct{} {
-	c := make(map[common.Hash]struct{}, len(d.readCodes))
+func (d *TouchReaderWriter) AllTouches() map[common.Address]struct{} {
+	c := make(map[common.Address]struct{}, len(d.readCodes)+len(d.updatedCodes))
 
 	for h := range d.readCodes {
 		c[h] = struct{}{}

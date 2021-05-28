@@ -92,11 +92,6 @@ const (
 	//value - incarnation of account when it was last deleted
 	IncarnationMapBucket = "incarnationMap"
 
-	//TEVMCodeStatusBucket -
-	//key - encoded timestamp(block number)
-	//value - contract codes hashes: [code_hash1]+[code_hash2]
-	ContractTEVMCodeStatusBucket = "TEVMCodeStatus"
-
 	//TEVMCodeBucket -
 	//key - contract code hash
 	//value - contract EVTM code
@@ -182,7 +177,7 @@ const (
 
 	// CallTraceSet is the name of the table that contain the mapping of block number to the set (sorted) of all accounts
 	// touched by call traces. It is DupSort-ed table
-	// 8-byte BE block nunber -> account address -> two bits (one for "from", another for "to")
+	// 8-byte BE block number -> account address -> two bits (one for "from", another for "to")
 	CallTraceSet = "call_trace_set"
 	// Indices for call traces - have the same format as LogTopicIndex and LogAddressIndex
 	// Store bitmap indices - in which block number we saw calls from (CallFromIndex) or to (CallToIndex) some addresses
@@ -324,7 +319,6 @@ var Buckets = []string{
 	DatabaseInfoBucket,
 	IncarnationMapBucket,
 	ContractTEVMCodeBucket,
-	ContractTEVMCodeStatusBucket,
 	CliqueSeparateBucket,
 	CliqueLastSnapshotBucket,
 	CliqueSnapshotBucket,
@@ -453,9 +447,6 @@ var BucketsConfigs = BucketsCfg{
 		CustomDupComparator: DupCmpSuffix32,
 	},
 	CallTraceSet: {
-		Flags: DupSort,
-	},
-	ContractTEVMCodeStatusBucket: {
 		Flags: DupSort,
 	},
 }

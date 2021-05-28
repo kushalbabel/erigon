@@ -69,7 +69,7 @@ type SimulatedBackend struct {
 	database  *ethdb.ObjectDatabase // In memory database to store our testing data
 	engine    consensus.Engine
 	getHeader func(hash common.Hash, number uint64) *types.Header
-	checkTEVM func(hash common.Hash) (bool, error)
+	checkTEVM func(common.Address, common.Hash) (bool, error)
 
 	mu              sync.Mutex
 	prependBlock    *types.Block
