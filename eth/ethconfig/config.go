@@ -45,6 +45,7 @@ import (
 // FullNodeGPO contains default gasprice oracle settings for full node.
 var FullNodeGPO = gasprice.Config{
 	Blocks:     20,
+	Default:    big.NewInt(0),
 	Percentile: 60,
 	MaxPrice:   gasprice.DefaultMaxPrice,
 }
@@ -118,8 +119,7 @@ type Config struct {
 	// for nodes to connect to.
 	EthDiscoveryURLs []string
 
-	EnableDownloadV2 bool
-	P2PEnabled       bool
+	P2PEnabled bool
 
 	StorageMode     ethdb.StorageMode
 	BatchSize       datasize.ByteSize // Batch size for execution stage
