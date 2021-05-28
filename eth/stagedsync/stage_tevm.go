@@ -24,7 +24,6 @@ type TranspileCfg struct {
 	readerBuilder   StateReaderBuilder
 	writerBuilder   StateWriterBuilder
 	chainConfig     *params.ChainConfig
-	pruningDistance uint64
 }
 
 func StageTranspileCfg(
@@ -33,7 +32,6 @@ func StageTranspileCfg(
 	readerBuilder StateReaderBuilder,
 	writerBuilder StateWriterBuilder,
 	chainConfig *params.ChainConfig,
-	pruningDistance uint64,
 ) TranspileCfg {
 	return TranspileCfg{
 		db:              kv,
@@ -41,7 +39,6 @@ func StageTranspileCfg(
 		readerBuilder:   readerBuilder,
 		writerBuilder:   writerBuilder,
 		chainConfig:     chainConfig,
-		pruningDistance: pruningDistance,
 	}
 }
 

@@ -230,7 +230,6 @@ func mock(t *testing.T) *MockSentry {
 			nil,
 			nil,
 			mock.chainConfig,
-			0,
 		),
 		stagedsync.StageHashStateCfg(db, mock.tmpdir),
 		stagedsync.StageTrieCfg(db, true, true, mock.tmpdir),

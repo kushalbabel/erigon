@@ -216,7 +216,6 @@ func NewStagedSync(
 			nil,
 			nil,
 			controlServer.chainConfig,
-			pruningDistance,
 		),
 		stagedsync.StageHashStateCfg(db, tmpdir),
 		stagedsync.StageTrieCfg(db, true, true, tmpdir),
