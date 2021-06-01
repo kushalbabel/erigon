@@ -354,20 +354,39 @@ func unwindCallTraces(logPrefix string, db ethdb.RwTx, from, to uint64, quitCh <
 }
 
 type CallTracer struct {
-	froms map[common.Address]struct{}
-	tos   map[common.Address]struct{}
+	froms   map[common.Address]struct{}
+	tos     map[common.Address]struct{}
+	created map[common.Address]struct{}
+	hasTEVM func(addr common.Address, hash *common.Hash) (bool, error)
 }
 
-func NewCallTracer() *CallTracer {
+func NewCallTracer(hasTEVM func(addr common.Address, hash *common.Hash) (bool, error)) *CallTracer {
 	return &CallTracer{
-		froms: make(map[common.Address]struct{}),
-		tos:   make(map[common.Address]struct{}),
+		froms:   make(map[common.Address]struct{}),
+		tos:     make(map[common.Address]struct{}),
+		created: make(map[common.Address]struct{}),
+		hasTEVM: hasTEVM,
 	}
 }
 
 func (ct *CallTracer) CaptureStart(depth int, from common.Address, to common.Address, precompile bool, create bool, calltype vm.CallType, input []byte, gas uint64, value *big.Int) error {
 	ct.froms[from] = struct{}{}
 	ct.tos[to] = struct{}{}
+
+	if create {
+		_, has := ct.created[to]
+		if has {
+			return nil
+		}
+
+		has, err := ct.hasTEVM(to, nil)
+		if !has {
+			ct.created[to] = struct{}{}
+		}
+		if err != nil {
+			log.Warn("while CaptureStart", "error", err)
+		}
+	}
 	return nil
 }
 func (ct *CallTracer) CaptureState(env *vm.EVM, pc uint64, op vm.OpCode, gas, cost uint64, memory *vm.Memory, stack *stack.Stack, rData []byte, contract *vm.Contract, depth int, err error) error {

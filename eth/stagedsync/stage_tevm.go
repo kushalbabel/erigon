@@ -19,11 +19,11 @@ import (
 var stageTranspileGauge = metrics.NewRegisteredGauge("stage/tevm", nil)
 
 type TranspileCfg struct {
-	db              ethdb.RwKV
-	batchSize       datasize.ByteSize
-	readerBuilder   StateReaderBuilder
-	writerBuilder   StateWriterBuilder
-	chainConfig     *params.ChainConfig
+	db            ethdb.RwKV
+	batchSize     datasize.ByteSize
+	readerBuilder StateReaderBuilder
+	writerBuilder StateWriterBuilder
+	chainConfig   *params.ChainConfig
 }
 
 func StageTranspileCfg(
@@ -34,11 +34,11 @@ func StageTranspileCfg(
 	chainConfig *params.ChainConfig,
 ) TranspileCfg {
 	return TranspileCfg{
-		db:              kv,
-		batchSize:       batchSize,
-		readerBuilder:   readerBuilder,
-		writerBuilder:   writerBuilder,
-		chainConfig:     chainConfig,
+		db:            kv,
+		batchSize:     batchSize,
+		readerBuilder: readerBuilder,
+		writerBuilder: writerBuilder,
+		chainConfig:   chainConfig,
 	}
 }
 
@@ -68,7 +68,11 @@ func transpileBatch(logPrefix string, s *StageState, fromBlock uint64, toBlock u
 	)
 	codeHashKey := make([]byte, common.HashLength+dbutils.NumberLength)
 
+	fmt.Println("===Transpile-1")
+	ni := 0
 	for k, addrStatus, err := c.Seek(keyStart); k != nil; k, addrStatus, err = c.Next() {
+		fmt.Println("===Transpile-2", ni, err)
+		ni++
 		if err != nil {
 			return fmt.Errorf("can't read pending code translations: %w", err)
 		}
@@ -291,7 +295,7 @@ func UnwindTranspileStage(u *UnwindState, s *StageState, tx ethdb.RwTx, _ <-chan
 			return err
 		}
 
-		if addrStatus[len(addrStatus)-1]&4 != 1 {
+		if addrStatus[len(addrStatus)-1]&4 == 0 {
 			continue
 		}
 

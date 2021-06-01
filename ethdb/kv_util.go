@@ -140,31 +140,65 @@ func testKVPath() string {
 }
 
 // todo: return TEVM code and use it
-func GetCheckTEVM(db KVGetter) func(addr common.Address, codeHash common.Hash) (bool, error) {
+func GetCheckTEVM(db KVGetter) func(contractAddr common.Address, hash *common.Hash) (bool, error) {
 	checked := map[common.Hash]struct{}{}
 	var ok bool
 
-	return func(addr common.Address, codeHash common.Hash) (bool, error) {
-		if _, ok = checked[codeHash]; ok {
+	return func(contractAddr common.Address, codeHash *common.Hash) (bool, error) {
+		if codeHash == nil {
+			codeHashKey := make([]byte, common.HashLength+dbutils.NumberLength)
+			hashedAddr := contractAddr[:]
+
+			inc, err := db.GetOne(dbutils.IncarnationMapBucket, hashedAddr)
+			if err != nil {
+				return false, fmt.Errorf("can't read code incarnation bucket by address %q: %w",
+					contractAddr.String(), err)
+			}
+
+			addrHash, err := common.HashData(hashedAddr)
+			if err != nil {
+				return false, fmt.Errorf("can't get address hash from address %q: %w",
+					contractAddr.String(), err)
+			}
+
+			copy(codeHashKey[:common.HashLength], addrHash[:])
+			copy(codeHashKey[common.HashLength:], inc)
+
+			codeHashBytes, err := db.GetOne(dbutils.ContractCodeBucket, codeHashKey)
+			if err != nil {
+				return false, fmt.Errorf("can't read code bucket by address %q: %w",
+					contractAddr.String(), err)
+			}
+
+			h := common.BytesToHash(codeHashBytes)
+			codeHash = &h
+		}
+
+		hash := *codeHash
+
+		if _, ok = checked[hash]; ok {
 			return true, nil
 		}
 
-		v, err := db.GetOne(dbutils.CallTraceSet, addr.Bytes())
+		v, err := db.GetOne(dbutils.CallTraceSet, contractAddr.Bytes())
 		if !errors.Is(err, ErrKeyNotFound) {
-			return false, err
+			return false, fmt.Errorf("can't get traces by contract address %q: %w",
+				contractAddr.String(), err)
 		}
 
 		if v[common.AddressLength]&4 == 1 {
-			return false, ErrKeyNotFound
+			// already scheduled to translation
+			return true, nil
 		}
 
-		ok, err = db.Has(dbutils.ContractTEVMCodeBucket, codeHash.Bytes())
+		ok, err = db.Has(dbutils.ContractTEVMCodeBucket, hash.Bytes())
 		if !errors.Is(err, ErrKeyNotFound) {
-			return false, err
+			return false, fmt.Errorf("can't check TEVM bucket by contract %q: %w",
+				contractAddr.String(), err)
 		}
 
 		if !ok {
-			checked[codeHash] = struct{}{}
+			checked[hash] = struct{}{}
 		}
 
 		return ok, nil

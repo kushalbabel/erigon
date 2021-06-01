@@ -105,7 +105,7 @@ type BlockContext struct {
 	// GetHash returns the hash corresponding to n
 	GetHash GetHashFunc
 	// checkTEVM returns true if the contract has TEVM code
-	CheckTEVM func(addr common.Address, codeHash common.Hash) (bool, error)
+	CheckTEVM func(addr common.Address, codeHash *common.Hash) (bool, error)
 
 	// Block information
 	Coinbase    common.Address // Provides information for COINBASE
@@ -261,7 +261,7 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 			codehash := evm.IntraBlockState.GetCodeHash(addrCopy)
 
 			var isTEVM bool
-			isTEVM, err = evm.Context.CheckTEVM(addrCopy, codehash)
+			isTEVM, err = evm.Context.CheckTEVM(addrCopy, &codehash)
 
 			if err == nil {
 				contract := NewContract(caller, AccountRef(addrCopy), value, gas, evm.vmConfig.SkipAnalysis, isTEVM)
@@ -330,7 +330,7 @@ func (evm *EVM) CallCode(caller ContractRef, addr common.Address, input []byte, 
 		var isTEVM bool
 
 		codeHash := evm.IntraBlockState.GetCodeHash(addrCopy)
-		isTEVM, err = evm.Context.CheckTEVM(addrCopy, codeHash)
+		isTEVM, err = evm.Context.CheckTEVM(addrCopy, &codeHash)
 
 		if err == nil {
 			contract := NewContract(caller, AccountRef(caller.Address()), value, gas, evm.vmConfig.SkipAnalysis, isTEVM)
@@ -379,7 +379,7 @@ func (evm *EVM) DelegateCall(caller ContractRef, addr common.Address, input []by
 		// Initialise a new contract and make initialise the delegate values
 		var isTEVM bool
 		codeHash := evm.IntraBlockState.GetCodeHash(addrCopy)
-		isTEVM, err = evm.Context.CheckTEVM(addrCopy, codeHash)
+		isTEVM, err = evm.Context.CheckTEVM(addrCopy, &codeHash)
 
 		if err == nil {
 			contract := NewContract(caller, AccountRef(caller.Address()), nil, gas, evm.vmConfig.SkipAnalysis, isTEVM).AsDelegate()
@@ -441,7 +441,7 @@ func (evm *EVM) StaticCall(caller ContractRef, addr common.Address, input []byte
 		// The contract is a scoped environment for this execution context only.
 		var isTEVM bool
 		codeHash := evm.IntraBlockState.GetCodeHash(addrCopy)
-		isTEVM, err = evm.Context.CheckTEVM(addrCopy, codeHash)
+		isTEVM, err = evm.Context.CheckTEVM(addrCopy, &codeHash)
 
 		if err == nil {
 			contract := NewContract(caller, AccountRef(addrCopy), new(uint256.Int), gas, evm.vmConfig.SkipAnalysis, isTEVM)
@@ -486,7 +486,7 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 	if !evm.Context.CanTransfer(evm.IntraBlockState, caller.Address(), value) {
 		return nil, common.Address{}, gas, ErrInsufficientBalance
 	}
-	if evm.vmConfig.Debug {
+	if evm.vmConfig.Debug || evm.vmConfig.TEMV {
 		_ = evm.vmConfig.Tracer.CaptureStart(evm.depth, caller.Address(), address, false /* precompile */, true /* create */, calltype, codeAndHash.code, gas, value.ToBig())
 		defer func(startGas uint64, startTime time.Time) { // Lazy evaluation of the parameters
 			evm.vmConfig.Tracer.CaptureEnd(evm.depth, ret, startGas-gas, time.Since(startTime), err) //nolint:errcheck

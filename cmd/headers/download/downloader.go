@@ -198,7 +198,6 @@ func NewStagedSync(
 			db,
 			sm.Receipts,
 			sm.CallTraces,
-			sm.TEVM,
 			pruningDistance,
 			batchSize,
 			nil,
@@ -207,7 +206,7 @@ func NewStagedSync(
 			nil,
 			controlServer.chainConfig,
 			controlServer.engine,
-			&vm.Config{NoReceipts: !sm.Receipts},
+			&vm.Config{NoReceipts: !sm.Receipts, TEMV: sm.TEVM},
 			tmpdir,
 		),
 		stagedsync.StageTranspileCfg(
