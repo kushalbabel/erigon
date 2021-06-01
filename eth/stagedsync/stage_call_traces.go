@@ -373,7 +373,7 @@ func (ct *CallTracer) CaptureStart(depth int, from common.Address, to common.Add
 	ct.froms[from] = struct{}{}
 	ct.tos[to] = struct{}{}
 
-	if create {
+	if create && ct.hasTEVM != nil {
 		_, has := ct.created[to]
 		if has {
 			return nil

@@ -13,20 +13,16 @@ import (
 	"github.com/ledgerwatch/erigon/log"
 )
 
-func Get(tx Tx, bucket string, key []byte) ([]byte, error) {
-	var dat []byte
+func Get(tx KVGetter, bucket string, key []byte) ([]byte, error) {
 	v, err := tx.GetOne(bucket, key)
 	if err != nil {
 		return nil, err
 	}
-	if v != nil {
-		dat = make([]byte, len(v))
-		copy(dat, v)
-	}
-	if dat == nil {
+	if len(v) == 0 {
 		return nil, ErrKeyNotFound
 	}
-	return dat, err
+
+	return v, nil
 }
 
 func ForEach(c Cursor, walker func(k, v []byte) (bool, error)) error {
@@ -149,14 +145,14 @@ func GetCheckTEVM(db KVGetter) func(contractAddr common.Address, hash *common.Ha
 			codeHashKey := make([]byte, common.HashLength+dbutils.NumberLength)
 			hashedAddr := contractAddr[:]
 
-			inc, err := db.GetOne(dbutils.IncarnationMapBucket, hashedAddr)
-			if err != nil {
+			inc, err := Get(db, dbutils.IncarnationMapBucket, hashedAddr)
+			if err != nil && !errors.Is(err, ErrKeyNotFound) {
 				return false, fmt.Errorf("can't read code incarnation bucket by address %q: %w",
 					contractAddr.String(), err)
 			}
 
 			addrHash, err := common.HashData(hashedAddr)
-			if err != nil {
+			if err != nil && !errors.Is(err, ErrKeyNotFound) {
 				return false, fmt.Errorf("can't get address hash from address %q: %w",
 					contractAddr.String(), err)
 			}
@@ -164,8 +160,8 @@ func GetCheckTEVM(db KVGetter) func(contractAddr common.Address, hash *common.Ha
 			copy(codeHashKey[:common.HashLength], addrHash[:])
 			copy(codeHashKey[common.HashLength:], inc)
 
-			codeHashBytes, err := db.GetOne(dbutils.ContractCodeBucket, codeHashKey)
-			if err != nil {
+			codeHashBytes, err := Get(db, dbutils.ContractCodeBucket, codeHashKey)
+			if err != nil && !errors.Is(err, ErrKeyNotFound) {
 				return false, fmt.Errorf("can't read code bucket by address %q: %w",
 					contractAddr.String(), err)
 			}
@@ -180,8 +176,10 @@ func GetCheckTEVM(db KVGetter) func(contractAddr common.Address, hash *common.Ha
 			return true, nil
 		}
 
-		v, err := db.GetOne(dbutils.CallTraceSet, contractAddr.Bytes())
-		if !errors.Is(err, ErrKeyNotFound) {
+		v, err := Get(db, dbutils.CallTraceSet, contractAddr.Bytes())
+		if errors.Is(err, ErrKeyNotFound) {
+			return false, nil
+		} else if err != nil {
 			return false, fmt.Errorf("can't get traces by contract address %q: %w",
 				contractAddr.String(), err)
 		}
@@ -192,7 +190,7 @@ func GetCheckTEVM(db KVGetter) func(contractAddr common.Address, hash *common.Ha
 		}
 
 		ok, err = db.Has(dbutils.ContractTEVMCodeBucket, hash.Bytes())
-		if !errors.Is(err, ErrKeyNotFound) {
+		if err != nil && !errors.Is(err, ErrKeyNotFound) {
 			return false, fmt.Errorf("can't check TEVM bucket by contract %q: %w",
 				contractAddr.String(), err)
 		}
