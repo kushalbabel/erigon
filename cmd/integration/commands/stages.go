@@ -28,7 +28,6 @@ import (
 	"github.com/ledgerwatch/erigon/log"
 	"github.com/ledgerwatch/erigon/migrations"
 	"github.com/ledgerwatch/erigon/params"
-	"github.com/ledgerwatch/erigon/turbo/snapshotsync"
 	stages2 "github.com/ledgerwatch/erigon/turbo/stages"
 	"github.com/ledgerwatch/erigon/turbo/txpool"
 	"github.com/spf13/cobra"
@@ -788,9 +787,9 @@ func newSync(db ethdb.RwKV) (ethdb.StorageMode, consensus.Engine, *params.ChainC
 	case params.RinkebyChainName:
 		chainConfig = params.RinkebyChainConfig
 		genesis = core.DefaultRinkebyGenesisBlock()
-	case params.BaikalChainName:
-		chainConfig = params.BaikalChainConfig
-		genesis = core.DefaultBaikalGenesisBlock()
+	case params.CalaverasChainName:
+		chainConfig = params.CalaverasChainConfig
+		genesis = core.DefaultCalaverasGenesisBlock()
 	}
 	events := remotedbserver.NewEvents()
 
@@ -865,20 +864,6 @@ func stage(st *stagedsync.State, db ethdb.KVGetter, stage stages.SyncStage) *sta
 		panic(err)
 	}
 	return res
-}
-
-func SetSnapshotKV(db ethdb.Database, snapshotDir string, mode snapshotsync.SnapshotMode) error {
-	if len(snapshotDir) > 0 {
-		//todo change to new format
-		snapshotKV := db.(ethdb.HasRwKV).RwKV()
-		var err error
-		snapshotKV, err = snapshotsync.WrapBySnapshotsFromDir(snapshotKV, snapshotDir, mode)
-		if err != nil {
-			return err
-		}
-		db.(ethdb.HasRwKV).SetRwKV(snapshotKV)
-	}
-	return nil
 }
 
 func overrideStorageMode(db ethdb.RwKV) error {
